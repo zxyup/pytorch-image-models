@@ -38,10 +38,6 @@ from timm.optim import create_optimizer_v2, optimizer_kwargs
 from timm.scheduler import create_scheduler_v2, scheduler_kwargs
 from timm.utils import ApexScaler, NativeScaler
 
-from torch.utils.tensorboard import SummaryWriter
-
-writer = SummaryWriter('/data/work_dirs/zxy/Toy_Project/logs',flush_secs=30)
-
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as ApexDDP
@@ -376,10 +372,8 @@ def _parse_args():
     args_text = yaml.safe_dump(args.__dict__, default_flow_style=False)
     return args, args_text
 
-tfw=None
 
 def main():
-    global tfw
     utils.setup_default_logging()
     args, args_text = _parse_args()
 
@@ -584,7 +578,6 @@ def main():
     # create the train and eval datasets
     if args.data and not args.data_dir:
         args.data_dir = args.data
-    # print('6666666666666666666666666666666666666',args.train_split)
     dataset_train = create_dataset(
         args.dataset,
         root=args.data_dir,
@@ -596,7 +589,7 @@ def main():
         seed=args.seed,
         repeats=args.epoch_repeats,
     )
-    print('Train的长度:',len(dataset_train))
+
     dataset_eval = create_dataset(
         args.dataset,
         root=args.data_dir,
@@ -606,7 +599,7 @@ def main():
         download=args.dataset_download,
         batch_size=args.batch_size,
     )
-    print('Test的长度:',len(dataset_eval))
+
     # setup mixup / cutmix
     collate_fn = None
     mixup_fn = None
@@ -666,7 +659,7 @@ def main():
         use_multi_epochs_loader=args.use_multi_epochs_loader,
         worker_seeding=args.worker_seeding,
     )
-    print('Train_loader的长度:',len(loader_train))
+
     eval_workers = args.workers
     if args.distributed and ('tfds' in args.dataset or 'wds' in args.dataset):
         # FIXME reduces validation padding issues when using TFDS, WDS w/ workers and distributed training
@@ -686,7 +679,7 @@ def main():
         pin_memory=args.pin_mem,
         device=device,
     )
-    print('Test_loader的长度:',len(loader_eval))
+
     # setup loss function
     if args.jsd_loss:
         assert num_aug_splits > 1  # JSD only valid with aug splits set
@@ -769,9 +762,6 @@ def main():
         _logger.info(
             f'Scheduled epochs: {num_epochs}. LR stepped per {"epoch" if lr_scheduler.t_in_epochs else "update"}.')
 
-    
-    tfw = SummaryWriter(output_dir,flush_secs=30)
-
     try:
         for epoch in range(start_epoch, num_epochs):
             if hasattr(dataset_train, 'set_epoch'):
@@ -806,7 +796,6 @@ def main():
                 validate_loss_fn,
                 args,
                 amp_autocast=amp_autocast,
-                epochs=epoch
             )
 
             if model_ema is not None and not args.model_ema_force_cpu:
@@ -820,7 +809,6 @@ def main():
                     args,
                     amp_autocast=amp_autocast,
                     log_suffix=' (EMA)',
-                    epochs=epoch
                 )
                 eval_metrics = ema_eval_metrics
 
@@ -993,6 +981,7 @@ def train_one_epoch(
                         padding=0,
                         normalize=True
                     )
+
         if saver is not None and args.recovery_interval and (
                 (update_idx + 1) % args.recovery_interval == 0):
             saver.save_recovery(epoch, batch_idx=update_idx)
@@ -1003,10 +992,6 @@ def train_one_epoch(
         update_sample_count = 0
         data_start_time = time.time()
         # end for
-    
-    global tfw
-    tfw.add_scalar('LR',lr,epoch+1)
-    tfw.add_scalar('Train/loss',losses_m.avg,epoch+1)
 
     if hasattr(optimizer, 'sync_lookahead'):
         optimizer.sync_lookahead()
@@ -1021,8 +1006,7 @@ def validate(
         args,
         device=torch.device('cuda'),
         amp_autocast=suppress,
-        log_suffix='',
-        epochs=0
+        log_suffix=''
 ):
     batch_time_m = utils.AverageMeter()
     losses_m = utils.AverageMeter()
@@ -1083,11 +1067,6 @@ def validate(
                 )
 
     metrics = OrderedDict([('loss', losses_m.avg), ('top1', top1_m.avg), ('top5', top5_m.avg)])
-    
-    global tfw
-    tfw.add_scalar('Test/loss',losses_m.avg,epochs+1)
-    tfw.add_scalar('Test/Acc@1',top1_m.avg,epochs+1)
-    tfw.add_scalar('Test/Acc@5',top5_m.avg,epochs+1)
 
     return metrics
 
